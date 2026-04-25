@@ -6,10 +6,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/deadcode/go-supervisor/internal/supervisor"
+	"github.com/garaekz/go-supervisor/internal/supervisor"
 )
 
-const version = "0.1.4"
+const version = "0.1.5"
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "--version" {

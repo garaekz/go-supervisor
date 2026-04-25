@@ -1,3 +1,3 @@
-module github.com/deadcode/go-supervisor
+module github.com/garaekz/go-supervisor
 
 go 1.23
