@@ -1,0 +1,37 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Build supervisor
+        run: go build -o bin/deadcode-supervisor${{ runner.os == 'Windows' && '.exe' || '' }} ./cmd/deadcode-supervisor
+
+      - name: Smoke version
+        shell: pwsh
+        run: |
+          $binary = if ($env:RUNNER_OS -eq 'Windows') { 'bin/deadcode-supervisor.exe' } else { 'bin/deadcode-supervisor' }
+          & $binary --version
