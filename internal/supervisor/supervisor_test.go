@@ -2,46 +2,41 @@ package supervisor
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
 	"unicode/utf16"
 )
 
-func TestRunOnceRelaysWorkerCompletionAndStreamsStartedFrame(t *testing.T) {
-	t.Parallel()
+func TestMain(m *testing.M) {
+	switch os.Getenv("GO_SUPERVISOR_TEST_WORKER") {
+	case "complete":
+		runCompleteTestWorker()
+		return
+	case "fail":
+		fmt.Fprint(os.Stderr, "worker exploded\n")
+		os.Exit(17)
+	}
 
+	os.Exit(m.Run())
+}
+
+func TestRunOnceRelaysWorkerCompletionAndStreamsStartedFrame(t *testing.T) {
 	dir := t.TempDir()
-	workerPath := filepath.Join(dir, "worker.php")
-	bootstrapPath := filepath.Join(dir, "bootstrap.php")
+	workerPath := filepath.Join(dir, "worker")
+	bootstrapPath := filepath.Join(dir, "bootstrap")
 	capturedPath := filepath.Join(dir, "captured.json")
 
-	mustWriteExecutable(t, workerPath, `<?php
-$input = trim(stream_get_contents(STDIN));
-file_put_contents(`+phpString(capturedPath)+`, $input);
-$frame = json_decode($input, true, flags: JSON_THROW_ON_ERROR);
-echo json_encode([
-    'type' => 'task.completed',
-    'taskId' => $frame['taskId'],
-    'result' => [
-        'status' => 'ok',
-        'data' => ['message' => 'done'],
-        'meta' => [],
-        'events' => [[
-            'type' => 'task.progress',
-            'taskId' => $frame['taskId'],
-            'message' => 'worker progress',
-            'percent' => 100,
-            'meta' => [],
-        ]],
-    ],
-], JSON_THROW_ON_ERROR) . PHP_EOL;
-`)
-	mustWriteExecutable(t, bootstrapPath, `<?php return null;`)
+	mustWriteExecutable(t, workerPath, ``)
+	mustWriteExecutable(t, bootstrapPath, ``)
+	t.Setenv("GO_SUPERVISOR_TEST_WORKER", "complete")
+	t.Setenv("GO_SUPERVISOR_TEST_CAPTURED_PATH", capturedPath)
 
 	input := `{"type":"task.run","taskId":"task-123","name":"fixture.task","taskClass":"Tests\\FixtureTask","payload":{"name":"demo"}}` + "\n"
 	cfg := Config{
-		PHPBinary:     "php",
+		PHPBinary:     os.Args[0],
 		WorkerScript:  workerPath,
 		BootstrapPath: bootstrapPath,
 		WorkingDir:    dir,
@@ -80,20 +75,16 @@ echo json_encode([
 }
 
 func TestRunOnceReturnsFailureFrameWhenWorkerFails(t *testing.T) {
-	t.Parallel()
-
 	dir := t.TempDir()
-	workerPath := filepath.Join(dir, "worker.php")
-	bootstrapPath := filepath.Join(dir, "bootstrap.php")
+	workerPath := filepath.Join(dir, "worker")
+	bootstrapPath := filepath.Join(dir, "bootstrap")
 
-	mustWriteExecutable(t, workerPath, `<?php
-fwrite(STDERR, "worker exploded\n");
-exit(17);
-`)
-	mustWriteExecutable(t, bootstrapPath, `<?php return null;`)
+	mustWriteExecutable(t, workerPath, ``)
+	mustWriteExecutable(t, bootstrapPath, ``)
+	t.Setenv("GO_SUPERVISOR_TEST_WORKER", "fail")
 
 	cfg := Config{
-		PHPBinary:     "php",
+		PHPBinary:     os.Args[0],
 		WorkerScript:  workerPath,
 		BootstrapPath: bootstrapPath,
 		WorkingDir:    dir,
@@ -130,6 +121,56 @@ func TestNormalizeInputBytesHandlesPowerShellUnicodePipeline(t *testing.T) {
 	}
 }
 
+func runCompleteTestWorker() {
+	input, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to read stdin: %v\n", err)
+		os.Exit(2)
+	}
+
+	capturedPath := os.Getenv("GO_SUPERVISOR_TEST_CAPTURED_PATH")
+	if capturedPath != "" {
+		if err := os.WriteFile(capturedPath, input, 0o644); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to write captured input: %v\n", err)
+			os.Exit(2)
+		}
+	}
+
+	frame := map[string]any{}
+	if err := json.Unmarshal(input, &frame); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to decode input: %v\n", err)
+		os.Exit(2)
+	}
+
+	taskID, _ := frame["taskId"].(string)
+	encoded, err := json.Marshal(map[string]any{
+		"type":   "task.completed",
+		"taskId": taskID,
+		"result": map[string]any{
+			"status": "ok",
+			"data": map[string]any{
+				"message": "done",
+			},
+			"meta": []any{},
+			"events": []map[string]any{
+				{
+					"type":    "task.progress",
+					"taskId":  taskID,
+					"message": "worker progress",
+					"percent": 100,
+					"meta":    []any{},
+				},
+			},
+		},
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to encode output: %v\n", err)
+		os.Exit(2)
+	}
+
+	fmt.Println(string(encoded))
+}
+
 func decodeFrames(t *testing.T, output string) []map[string]any {
 	t.Helper()
 
@@ -152,11 +193,6 @@ func mustWriteExecutable(t *testing.T, path string, contents string) {
 	if err := os.WriteFile(path, []byte(contents), 0o755); err != nil {
 		t.Fatal(err)
 	}
-}
-
-func phpString(value string) string {
-	encoded, _ := json.Marshal(value)
-	return string(encoded)
 }
 
 func utf16LEBytes(value string) []byte {
