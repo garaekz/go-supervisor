@@ -9,7 +9,7 @@ import (
 	"github.com/deadcode/go-supervisor/internal/supervisor"
 )
 
-const version = "0.1.0"
+const version = "0.1.4"
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "--version" {
